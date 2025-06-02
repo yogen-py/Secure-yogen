@@ -1,0 +1,10 @@
+peers:
+  - name: peerA
+    ip: 172.17.128.54
+    port: 50051
+  - name: peerB
+    ip: 172.17.128.21
+    port: 50051
+  - name: peerC
+    ip: 172.17.128.40
+    port: 50051

@@ -1,0 +1,20 @@
+// model.proto
+syntax = "proto3";
+
+package fl;
+
+// Service definition
+service FLPeer {
+  rpc SendModel (ModelWeights) returns (Ack);
+}
+
+// Message for sending model weights (as bytes)
+message ModelWeights {
+  bytes weights = 1;
+}
+
+// Acknowledgment message
+message Ack {
+  string message = 1;
+}
+
