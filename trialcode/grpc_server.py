@@ -8,6 +8,7 @@ import logging
 import threading
 from queue import Queue
 import ssl
+import datetime
 
 # Configure logging
 logging.basicConfig(
@@ -44,6 +45,23 @@ class FLPeerServicer(model_pb2_grpc.FLPeerServicer):
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
             return model_pb2.Ack(message=f"Error: {str(e)}")
+
+    def HealthCheck(self, request, context):
+        """Handle health check requests"""
+        try:
+            return model_pb2.HealthCheckResponse(
+                status="OK",
+                peer_id=request.peer_id,
+                timestamp=datetime.datetime.now().isoformat()
+            )
+        except Exception as e:
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(str(e))
+            return model_pb2.HealthCheckResponse(
+                status="ERROR",
+                peer_id=request.peer_id,
+                timestamp=datetime.datetime.now().isoformat()
+            )
 
 def serve(port=50051, ssl_key=None, ssl_cert=None):
     """

@@ -3,18 +3,35 @@ syntax = "proto3";
 
 package fl;
 
-// Service definition
+// Service definition for Federated Learning peer communication
 service FLPeer {
+  // SendModel: Transfer model weights between peers
   rpc SendModel (ModelWeights) returns (Ack);
+  
+  // HealthCheck: Monitor peer availability and network status
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
 }
 
-// Message for sending model weights (as bytes)
+// ModelWeights: Contains serialized model parameters
 message ModelWeights {
-  bytes weights = 1;
+  bytes weights = 1;  // Serialized PyTorch state dict
 }
 
-// Acknowledgment message
+// Acknowledgment message for operations
 message Ack {
-  string message = 1;
+  string message = 1;  // Status or error message
+}
+
+// HealthCheck request message
+message HealthCheckRequest {
+  string peer_id = 1;    // ID of the requesting peer
+  string timestamp = 2;  // ISO format timestamp of request
+}
+
+// HealthCheck response message
+message HealthCheckResponse {
+  string status = 1;     // OK, ERROR, etc.
+  string peer_id = 2;    // ID of the responding peer
+  string timestamp = 3;  // ISO format timestamp of response
 }
 
