@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 import torch
 
 
-def load_and_preprocess_data(path="adults.csv"):
+def load_and_preprocess_data(path="adults.csv", machine_id=0, total_machines=4):
     # ----------------------------
     # Load the dataset
     # ----------------------------
@@ -47,6 +47,14 @@ def load_and_preprocess_data(path="adults.csv"):
     normalize_columns = ['age', 'fnlwgt', 'capital-gain', 'capital-loss', 'hours-per-week']
     scaler = preprocessing.StandardScaler()
     df[normalize_columns] = scaler.fit_transform(df[normalize_columns])
+
+    # Split data based on machine ID
+    total_samples = len(df)
+    samples_per_machine = total_samples // total_machines
+    start_idx = machine_id * samples_per_machine
+    end_idx = start_idx + samples_per_machine if machine_id < total_machines - 1 else total_samples
+    
+    df = df.iloc[start_idx:end_idx]
 
     # ----------------------------
     # Split into train/test
