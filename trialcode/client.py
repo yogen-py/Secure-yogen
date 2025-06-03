@@ -10,4 +10,4 @@ def send_model(model, peer_address):
     stub = model_pb2_grpc.FLPeerStub(channel)
     data = pickle.dumps(model.state_dict())
     response = stub.SendModel(model_pb2.ModelWeights(weights=data))
-    print(f"Sent to {peer_address}: {response.message}"
+    print(f"Sent to {peer_address}: {response.message}")
