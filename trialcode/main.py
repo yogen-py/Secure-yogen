@@ -115,36 +115,41 @@ if __name__ == "__main__":
         logger.info(f"Own address: {own_address}")
         logger.info(f"All peers: {peer_addresses}")
 
-        # Clear any previous models
-        received_models.clear()
-        
-        # Run local training and send to peers
-        local_model, successful_sends = run_round(peer_addresses, own_address)
-        
-        # Calculate required peers (excluding self)
-        total_peers = len(peer_addresses) - 1
-        min_required_peers = max(1, total_peers // 2)  # At least 50% of peers
-        
-        if successful_sends < min_required_peers:
-            logger.error(f"Failed to reach minimum required peers ({successful_sends}/{min_required_peers})")
-            raise RuntimeError("Insufficient peer connectivity")
+        num_rounds = 10  # or any number of rounds you want
+
+        for round_num in range(1, num_rounds + 1):
+            logger.info(f"=== Federated Learning Round {round_num} ===")
+            received_models.clear()
             
-        # Wait for other peers
-        if total_peers > 0:
-            logger.info(f"Waiting for peer models (minimum {min_required_peers} required)")
-            try:
-                wait_for_peer_models(min_required_peers)
-            except TimeoutError as e:
-                logger.error(f"Timeout waiting for peer models: {str(e)}")
-                raise
-        
-        # Combine local and received models
-        all_models = [local_model] + received_models
-        
-        # Perform federation
-        global_model = simulate_federation(all_models)
-        logger.info(f"FedAvg complete with {len(all_models)} models")
-        
+            # Run local training and send to peers
+            local_model, successful_sends = run_round(peer_addresses, own_address)
+            
+            # Calculate required peers (excluding self)
+            total_peers = len(peer_addresses) - 1
+            min_required_peers = max(1, total_peers // 2)  # At least 50% of peers
+            
+            if successful_sends < min_required_peers:
+                logger.error(f"Failed to reach minimum required peers ({successful_sends}/{min_required_peers})")
+                raise RuntimeError("Insufficient peer connectivity")
+                
+            # Wait for other peers
+            if total_peers > 0:
+                logger.info(f"Waiting for peer models (minimum {min_required_peers} required)")
+                try:
+                    wait_for_peer_models(min_required_peers)
+                except TimeoutError as e:
+                    logger.error(f"Timeout waiting for peer models: {str(e)}")
+                    raise
+            
+            # Combine local and received models
+            all_models = [local_model] + received_models
+            
+            # Perform federation
+            global_model = simulate_federation(all_models)
+            logger.info(f"FedAvg complete with {len(all_models)} models")
+            logger.info(f"=== End of Round {round_num} ===\n")
+            time.sleep(5)  # Optional: wait before next round
+
     except Exception as e:
         logger.error(f"Fatal error in main process: {str(e)}")
         raise
