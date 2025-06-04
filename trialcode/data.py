@@ -3,6 +3,7 @@ import numpy as np
 from sklearn import preprocessing
 from sklearn.model_selection import train_test_split
 import torch
+from torch.utils.data import TensorDataset, DataLoader
 
 
 def load_and_preprocess_data(path="adults.csv", machine_id=0, total_machines=4):
@@ -71,4 +72,13 @@ def load_and_preprocess_data(path="adults.csv", machine_id=0, total_machines=4):
     y_test_tensor = torch.tensor(y_test).view(-1, 1)
 
     return X_train_tensor, y_train_tensor, X_test_tensor, y_test_tensor
+
+
+def get_data_loaders(path="adults.csv", machine_id=0, total_machines=4, batch_size=32):
+    X_train, y_train, X_test, y_test = load_and_preprocess_data(path, machine_id, total_machines)
+    train_dataset = TensorDataset(X_train, y_train)
+    test_dataset = TensorDataset(X_test, y_test)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    return train_loader, test_loader
 
