@@ -6,9 +6,10 @@ import torch
 import time
 import yaml
 import socket
-from grpc_server import received_models
+from grpc_server import received_models, serve
 from tqdm import tqdm
 import argparse
+import threading
 
 # Configure logging
 logging.basicConfig(
@@ -139,12 +140,22 @@ def simulate_federation(peer_models):
         tqdm.write(f"[ERROR] Error in federation: {str(e)}")
         raise
 
+def start_grpc_server_in_thread(port=50051):
+    server_thread = threading.Thread(target=serve, args=(port,), daemon=True)
+    server_thread.start()
+    return server_thread
+
 if __name__ == "__main__":
     try:
         parser = argparse.ArgumentParser()
         parser.add_argument("--rounds", type=int, default=10, help="Number of federated learning rounds")
         args = parser.parse_args()
         num_rounds = args.rounds
+
+        # Start gRPC server in a background thread (so received_models is shared)
+        start_grpc_server_in_thread(port=50051)
+        tqdm.write("[INFO] gRPC server started in background thread.")
+        time.sleep(2)  # Give the server a moment to start
 
         peer_addresses = load_peers()
         own_ip = get_own_ip()
@@ -167,7 +178,12 @@ if __name__ == "__main__":
             if total_peers > 0:
                 tqdm.write(f"[INFO] Waiting for peer models (minimum {min_required_peers} required)")
                 try:
-                    wait_for_peer_models(min_required_peers)
+                    prev_count = 0
+                    while len(received_models) < min_required_peers:
+                        if len(received_models) > prev_count:
+                            tqdm.write(f"[RECEIVE] New model received! Total received: {len(received_models)}")
+                            prev_count = len(received_models)
+                        time.sleep(1)
                 except TimeoutError as e:
                     tqdm.write(f"[ERROR] Timeout waiting for peer models: {str(e)}")
                     raise
