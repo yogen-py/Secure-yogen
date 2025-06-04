@@ -40,13 +40,19 @@ def get_own_ip():
     return IP
 
 def wait_for_peer_models(required_peers, timeout=300):
-    """Wait for models from all peers"""
+    """Wait for models from all peers, with option to wake up/retry if timeout occurs."""
     start_time = time.time()
     with tqdm(total=required_peers, desc="Waiting for peer models", ncols=80) as pbar:
         last_count = 0
         while len(received_models) < required_peers:
             if time.time() - start_time > timeout:
-                raise TimeoutError(f"Timeout waiting for peer models after {timeout}s")
+                tqdm.write("[TIMEOUT] Timeout waiting for peer models. Press Enter to retry waiting, or type 'exit' to abort.")
+                user_input = input()
+                if user_input.strip().lower() == 'exit':
+                    raise TimeoutError(f"Timeout waiting for peer models after {timeout}s (user aborted)")
+                # Reset timer and continue waiting
+                start_time = time.time()
+                continue
             current_count = len(received_models)
             if current_count > last_count:
                 pbar.update(current_count - last_count)
