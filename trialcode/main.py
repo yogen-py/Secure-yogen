@@ -10,6 +10,8 @@ from grpc_server import received_models, serve
 from tqdm import tqdm
 import argparse
 import threading
+import hashlib
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(
@@ -63,40 +65,75 @@ def wait_for_peer_models(required_peers, timeout=300):
     tqdm.write(f"[DIAG] Received {len(received_models)} peer models.")
     # Print summary stats for each received model
     for i, state_dict in enumerate(received_models):
-        stats = summarize_weights(state_dict)
+        stats = summarize_weights_full(state_dict)
         tqdm.write(f"[DIAG] Model {i+1} stats: " + ", ".join([f"{k}: mean={v['mean']:.4f}, std={v['std']:.4f}" for k,v in stats.items() if 'weight' in k]))
 
-def summarize_weights(state_dict):
+def summarize_weights_full(state_dict):
     stats = {}
     for k, v in state_dict.items():
         if torch.is_tensor(v):
             stats[k] = {
                 'shape': tuple(v.shape),
                 'mean': float(v.mean()),
-                'std': float(v.std())
+                'std': float(v.std()),
+                'min': float(v.min()),
+                'max': float(v.max())
             }
     return stats
 
+def state_dict_checksum(state_dict):
+    m = hashlib.sha256()
+    for k in sorted(state_dict.keys()):
+        v = state_dict[k]
+        if torch.is_tensor(v):
+            m.update(v.cpu().numpy().tobytes())
+    return m.hexdigest()[:12]
+
 def run_round(peer_addresses, own_address, max_retries=3, retry_delay=5):
-    """
-    Run a training round and send model to peers
-    Args:
-        peer_addresses: List of peer addresses
-        own_address: This node's address
-        max_retries: Maximum number of retry attempts per peer
-        retry_delay: Delay between retries in seconds
-    Returns:
-        tuple: (local_weights, successful_peers)
-    """
     try:
         tqdm.write("[ROUND] Starting local training round...")
-        local_weights = train_local()
+        # Detailed per-epoch logging
+        def train_with_logging(*args, **kwargs):
+            set_seed = kwargs.get('set_seed', 42)
+            epochs = kwargs.get('epochs', 3)
+            batch_size = kwargs.get('batch_size', 64)
+            save_dir = kwargs.get('save_dir', "models")
+            machine_id = kwargs.get('machine_id', 0)
+            total_machines = kwargs.get('total_machines', 4)
+            from data import get_data_loaders
+            from model import SimpleBinaryClassifier, get_loss, get_optimizer
+            from train import evaluate
+            import os
+            os.makedirs(save_dir, exist_ok=True)
+            train_loader, test_loader = get_data_loaders(machine_id=machine_id, total_machines=total_machines, batch_size=batch_size)
+            input_dim = next(iter(train_loader))[0].shape[1]
+            model = SimpleBinaryClassifier(input_dim)
+            criterion = get_loss()
+            optimizer = get_optimizer(model)
+            for epoch in range(epochs):
+                model.train()
+                epoch_loss = 0.0
+                for xb, yb in train_loader:
+                    optimizer.zero_grad()
+                    outputs = model(xb)
+                    loss = criterion(outputs, yb)
+                    loss.backward()
+                    optimizer.step()
+                    epoch_loss += loss.item() * xb.size(0)
+                avg_loss = epoch_loss / len(train_loader.dataset)
+                acc, prec, rec, f1 = evaluate(model, test_loader)
+                tqdm.write(f"[TRAIN][Epoch {epoch+1}/{epochs}] Loss: {avg_loss:.4f} | Acc: {acc:.4f} | Prec: {prec:.4f} | Rec: {rec:.4f} | F1: {f1:.4f}")
+            return model.state_dict()
+        # Use the above for detailed per-epoch logging
+        local_weights = train_with_logging()
         # Log summary stats of local weights
-        stats = summarize_weights(local_weights)
-        tqdm.write(f"[ROUND] Local model stats: " + ", ".join([f"{k}: mean={v['mean']:.4f}, std={v['std']:.4f}" for k,v in stats.items() if 'weight' in k]))
+        stats = summarize_weights_full(local_weights)
+        tqdm.write("[ROUND] Local model weights summary:")
+        for k, v in stats.items():
+            tqdm.write(f"  {k}: mean={v['mean']:.4f}, std={v['std']:.4f}, min={v['min']:.4f}, max={v['max']:.4f}")
+        tqdm.write(f"  Checksum: {state_dict_checksum(local_weights)}")
         successful_peers = []
         failed_peers = []
-        
         # Send to all other peers, skip self
         for addr in peer_addresses:
             if addr == own_address:
@@ -108,7 +145,11 @@ def run_round(peer_addresses, own_address, max_retries=3, retry_delay=5):
                 if retries > 0:
                     tqdm.write(f"[SEND] Retrying send to {addr} (attempt {retries + 1}/{max_retries})")
                     time.sleep(retry_delay)
-                tqdm.write(f"[SEND] Sending model to {addr}...")
+                now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                tqdm.write(f"[SEND][{now}] Sending model to {addr}...")
+                # Log model size
+                model_size = sum(v.numel() for v in local_weights.values() if torch.is_tensor(v)) * 4 / 1024
+                tqdm.write(f"[SEND] Model size: {model_size:.2f} KB")
                 success = send_model(
                     local_weights, 
                     addr,
@@ -117,7 +158,8 @@ def run_round(peer_addresses, own_address, max_retries=3, retry_delay=5):
                 )
                 retries += 1
             if success:
-                tqdm.write(f"[SEND] Model sent to {addr} successfully.")
+                now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                tqdm.write(f"[SEND][{now}] Model sent to {addr} successfully.")
                 successful_peers.append(addr)
             else:
                 tqdm.write(f"[SEND] Failed to send model to {addr} after {max_retries} attempts.")
@@ -129,12 +171,24 @@ def run_round(peer_addresses, own_address, max_retries=3, retry_delay=5):
         tqdm.write(f"[ERROR] Error in training round: {str(e)}")
         raise
 
+def summarize_received_models():
+    for i, state_dict in enumerate(received_models):
+        stats = summarize_weights_full(state_dict)
+        tqdm.write(f"[RECEIVE] Model {i+1} weights summary:")
+        for k, v in stats.items():
+            tqdm.write(f"  {k}: mean={v['mean']:.4f}, std={v['std']:.4f}, min={v['min']:.4f}, max={v['max']:.4f}")
+        tqdm.write(f"  Checksum: {state_dict_checksum(state_dict)}")
+
 def simulate_federation(peer_models):
     try:
         tqdm.write(f"[FEDAVG] Aggregating {len(peer_models)} models...")
         global_model = fed_avg(peer_models)
-        stats = summarize_weights(global_model)
-        tqdm.write(f"[FEDAVG] Global model stats: " + ", ".join([f"{k}: mean={v['mean']:.4f}, std={v['std']:.4f}" for k,v in stats.items() if 'weight' in k]))
+        stats = summarize_weights_full(global_model)
+        tqdm.write(f"[FEDAVG] Global model weights summary:")
+        for k, v in stats.items():
+            tqdm.write(f"  {k}: mean={v['mean']:.4f}, std={v['std']:.4f}, min={v['min']:.4f}, max={v['max']:.4f}")
+        checksum = state_dict_checksum(global_model)
+        tqdm.write(f"[FEDAVG] Global model checksum: {checksum}")
         return global_model
     except Exception as e:
         tqdm.write(f"[ERROR] Error in federation: {str(e)}")
@@ -181,7 +235,9 @@ if __name__ == "__main__":
                     prev_count = 0
                     while len(received_models) < min_required_peers:
                         if len(received_models) > prev_count:
-                            tqdm.write(f"[RECEIVE] New model received! Total received: {len(received_models)}")
+                            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            tqdm.write(f"[RECEIVE][{now}] New model received! Total received: {len(received_models)}")
+                            summarize_received_models()
                             prev_count = len(received_models)
                         time.sleep(1)
                 except TimeoutError as e:
@@ -193,8 +249,9 @@ if __name__ == "__main__":
             global_model = simulate_federation(all_models)
             tqdm.write(f"[ROUND] FedAvg complete with {len(all_models)} models")
             # Show updated model stats
-            stats = summarize_weights(global_model)
-            tqdm.write(f"[UPDATE] Model updated after FedAvg: " + ", ".join([f"{k}: mean={v['mean']:.4f}, std={v['std']:.4f}" for k,v in stats.items() if 'weight' in k]))
+            stats = summarize_weights_full(global_model)
+            tqdm.write(f"[UPDATE] Model updated after FedAvg: " + ", ".join([f"{k}: mean={v['mean']:.4f}, std={v['std']:.4f}, min={v['min']:.4f}, max={v['max']:.4f}" for k,v in stats.items() if 'weight' in k]))
+            tqdm.write(f"[UPDATE] Global model checksum: {state_dict_checksum(global_model)}")
             tqdm.write(f"=== End of Round {round_num} ===\n")
             time.sleep(5)  # Optional: wait before next round
     except Exception as e:
