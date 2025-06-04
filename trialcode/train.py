@@ -15,11 +15,15 @@ def train_local(epochs=3, batch_size=64):
     
     model.train()
     for epoch in range(epochs):
+        epoch_loss = 0.0
         for xb, yb in loader:
             optimizer.zero_grad()
             outputs = model(xb)
             loss = criterion(outputs, yb)
             loss.backward()
             optimizer.step()
+            epoch_loss += loss.item() * xb.size(0)
+        avg_loss = epoch_loss / len(loader.dataset)
+        print(f"[TRAIN] Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}")
     return model.state_dict()
 

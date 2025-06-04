@@ -9,6 +9,8 @@ import yaml
 import signal
 import psutil
 from pathlib import Path
+import select
+import threading
 
 # Configure logging
 logging.basicConfig(
@@ -97,6 +99,11 @@ def start_fl_process():
     )
     return fl_process
 
+def stream_output(proc, name):
+    for line in iter(proc.stdout.readline, ''):
+        if line:
+            print(f"[{name}] {line}", end='')
+
 def main():
     try:
         print("\n=== Starting Federated Learning Node ===\n")
@@ -121,18 +128,28 @@ def main():
         # 5. Start FL process
         fl_process = start_fl_process()
         
-        print("\nNode is running. Press Ctrl+C to stop.")
+        print("\nNode is running. Press Ctrl+C to stop.\n")
         
         # Monitor processes
-        while True:
-            if server_process.poll() is not None:
-                logger.error("gRPC server has stopped unexpectedly!")
-                break
-            if fl_process.poll() is not None:
-                logger.error("FL process has stopped unexpectedly!")
-                break
-            time.sleep(1)
-            
+        server_thread = threading.Thread(target=stream_output, args=(server_process, "SERVER"))
+        main_thread = threading.Thread(target=stream_output, args=(fl_process, "MAIN"))
+        server_thread.start()
+        main_thread.start()
+
+        try:
+            while server_thread.is_alive() or main_thread.is_alive():
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            print("\nShutting down...")
+        finally:
+            for proc in [server_process, fl_process]:
+                if proc and proc.poll() is None:
+                    proc.terminate()
+            time.sleep(2)
+            for proc in [server_process, fl_process]:
+                if proc and proc.poll() is None:
+                    proc.kill()
+
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
