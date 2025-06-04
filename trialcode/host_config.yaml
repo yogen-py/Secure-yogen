@@ -8,7 +8,4 @@ peers:
   - name: peerC
     ip: 172.17.128.40
     port: 50051
-  - name: peerD
-    ip: 172.17.83.83
-    port: 50051
 
