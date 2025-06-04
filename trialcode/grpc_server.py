@@ -30,8 +30,11 @@ class FLPeerServicer(model_pb2_grpc.FLPeerServicer):
             # Thread-safe append to received models
             with model_lock:
                 received_models.append(state_dict)
+                count = len(received_models)
             
-            logger.info(f"Received model weights from {context.peer()}")
+            peer_addr = context.peer()
+            logger.info(f"Received model weights from {peer_addr} (total received: {count})")
+            print(f"[SERVER] Received model from {peer_addr} (total received: {count})")
             return model_pb2.Ack(message="Model received successfully")
             
         except pickle.UnpicklingError as e:

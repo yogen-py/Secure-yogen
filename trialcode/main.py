@@ -8,6 +8,7 @@ import yaml
 import socket
 from grpc_server import received_models
 from tqdm import tqdm
+import argparse
 
 # Configure logging
 logging.basicConfig(
@@ -52,7 +53,11 @@ def wait_for_peer_models(required_peers, timeout=300):
                 last_count = current_count
             time.sleep(1)
         pbar.update(required_peers - last_count)
-    logger.info(f"Received {len(received_models)} peer models")
+    tqdm.write(f"[DIAG] Received {len(received_models)} peer models.")
+    # Print summary stats for each received model
+    for i, state_dict in enumerate(received_models):
+        stats = summarize_weights(state_dict)
+        tqdm.write(f"[DIAG] Model {i+1} stats: " + ", ".join([f"{k}: mean={v['mean']:.4f}, std={v['std']:.4f}" for k,v in stats.items() if 'weight' in k]))
 
 def summarize_weights(state_dict):
     stats = {}
@@ -88,6 +93,7 @@ def run_round(peer_addresses, own_address, max_retries=3, retry_delay=5):
         # Send to all other peers, skip self
         for addr in peer_addresses:
             if addr == own_address:
+                tqdm.write(f"[SEND] Skipping send to self ({addr})")
                 continue
             success = False
             retries = 0
@@ -129,13 +135,17 @@ def simulate_federation(peer_models):
 
 if __name__ == "__main__":
     try:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--rounds", type=int, default=10, help="Number of federated learning rounds")
+        args = parser.parse_args()
+        num_rounds = args.rounds
+
         peer_addresses = load_peers()
         own_ip = get_own_ip()
         own_port = '50051'
         own_address = f"{own_ip}:{own_port}"
         tqdm.write(f"[INFO] Own address: {own_address}")
         tqdm.write(f"[INFO] All peers: {peer_addresses}")
-        num_rounds = 10  # or any number of rounds you want
         for round_num in range(1, num_rounds + 1):
             tqdm.write(f"\n=== Federated Learning Round {round_num} ===")
             received_models.clear()
@@ -160,6 +170,9 @@ if __name__ == "__main__":
             # Perform federation
             global_model = simulate_federation(all_models)
             tqdm.write(f"[ROUND] FedAvg complete with {len(all_models)} models")
+            # Show updated model stats
+            stats = summarize_weights(global_model)
+            tqdm.write(f"[UPDATE] Model updated after FedAvg: " + ", ".join([f"{k}: mean={v['mean']:.4f}, std={v['std']:.4f}" for k,v in stats.items() if 'weight' in k]))
             tqdm.write(f"=== End of Round {round_num} ===\n")
             time.sleep(5)  # Optional: wait before next round
     except Exception as e:
