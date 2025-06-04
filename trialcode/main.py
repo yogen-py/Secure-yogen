@@ -7,6 +7,7 @@ import time
 import yaml
 import socket
 from grpc_server import received_models
+from tqdm import tqdm
 
 # Configure logging
 logging.basicConfig(
@@ -28,11 +29,11 @@ def load_peers(config_file='host_config.yaml'):
 def get_own_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
+        # doesn't have to be reachable
         s.connect(('10.255.255.255', 1))
         IP = s.getsockname()[0]
     except Exception:
         IP = '127.0.0.1'
-        logger.warning("Could not determine IP address, using localhost")
     finally:
         s.close()
     return IP
@@ -40,11 +41,29 @@ def get_own_ip():
 def wait_for_peer_models(required_peers, timeout=300):
     """Wait for models from all peers"""
     start_time = time.time()
-    while len(received_models) < required_peers:
-        if time.time() - start_time > timeout:
-            raise TimeoutError(f"Timeout waiting for peer models after {timeout}s")
-        time.sleep(1)
+    with tqdm(total=required_peers, desc="Waiting for peer models", ncols=80) as pbar:
+        last_count = 0
+        while len(received_models) < required_peers:
+            if time.time() - start_time > timeout:
+                raise TimeoutError(f"Timeout waiting for peer models after {timeout}s")
+            current_count = len(received_models)
+            if current_count > last_count:
+                pbar.update(current_count - last_count)
+                last_count = current_count
+            time.sleep(1)
+        pbar.update(required_peers - last_count)
     logger.info(f"Received {len(received_models)} peer models")
+
+def summarize_weights(state_dict):
+    stats = {}
+    for k, v in state_dict.items():
+        if torch.is_tensor(v):
+            stats[k] = {
+                'shape': tuple(v.shape),
+                'mean': float(v.mean()),
+                'std': float(v.std())
+            }
+    return stats
 
 def run_round(peer_addresses, own_address, max_retries=3, retry_delay=5):
     """
@@ -58,8 +77,11 @@ def run_round(peer_addresses, own_address, max_retries=3, retry_delay=5):
         tuple: (local_weights, successful_peers)
     """
     try:
-        logger.info("Starting local training round")
+        tqdm.write("[ROUND] Starting local training round...")
         local_weights = train_local()
+        # Log summary stats of local weights
+        stats = summarize_weights(local_weights)
+        tqdm.write(f"[ROUND] Local model stats: " + ", ".join([f"{k}: mean={v['mean']:.4f}, std={v['std']:.4f}" for k,v in stats.items() if 'weight' in k]))
         successful_peers = []
         failed_peers = []
         
@@ -67,15 +89,13 @@ def run_round(peer_addresses, own_address, max_retries=3, retry_delay=5):
         for addr in peer_addresses:
             if addr == own_address:
                 continue
-                
             success = False
             retries = 0
-            
             while not success and retries < max_retries:
                 if retries > 0:
-                    logger.info(f"Retrying send to {addr} (attempt {retries + 1}/{max_retries})")
+                    tqdm.write(f"[SEND] Retrying send to {addr} (attempt {retries + 1}/{max_retries})")
                     time.sleep(retry_delay)
-                
+                tqdm.write(f"[SEND] Sending model to {addr}...")
                 success = send_model(
                     local_weights, 
                     addr,
@@ -83,26 +103,28 @@ def run_round(peer_addresses, own_address, max_retries=3, retry_delay=5):
                     use_ssl=False  # Enable if SSL certificates are set up
                 )
                 retries += 1
-            
             if success:
+                tqdm.write(f"[SEND] Model sent to {addr} successfully.")
                 successful_peers.append(addr)
             else:
+                tqdm.write(f"[SEND] Failed to send model to {addr} after {max_retries} attempts.")
                 failed_peers.append(addr)
-        
         if failed_peers:
-            logger.warning(f"Failed to send model to peers: {failed_peers}")
-        
+            tqdm.write(f"[WARN] Failed to send model to peers: {failed_peers}")
         return local_weights, len(successful_peers)
-        
     except Exception as e:
-        logger.error(f"Error in training round: {str(e)}")
+        tqdm.write(f"[ERROR] Error in training round: {str(e)}")
         raise
 
 def simulate_federation(peer_models):
     try:
-        return fed_avg(peer_models)
+        tqdm.write(f"[FEDAVG] Aggregating {len(peer_models)} models...")
+        global_model = fed_avg(peer_models)
+        stats = summarize_weights(global_model)
+        tqdm.write(f"[FEDAVG] Global model stats: " + ", ".join([f"{k}: mean={v['mean']:.4f}, std={v['std']:.4f}" for k,v in stats.items() if 'weight' in k]))
+        return global_model
     except Exception as e:
-        logger.error(f"Error in federation: {str(e)}")
+        tqdm.write(f"[ERROR] Error in federation: {str(e)}")
         raise
 
 if __name__ == "__main__":
@@ -111,46 +133,35 @@ if __name__ == "__main__":
         own_ip = get_own_ip()
         own_port = '50051'
         own_address = f"{own_ip}:{own_port}"
-        
-        logger.info(f"Own address: {own_address}")
-        logger.info(f"All peers: {peer_addresses}")
-
+        tqdm.write(f"[INFO] Own address: {own_address}")
+        tqdm.write(f"[INFO] All peers: {peer_addresses}")
         num_rounds = 10  # or any number of rounds you want
-
         for round_num in range(1, num_rounds + 1):
-            logger.info(f"=== Federated Learning Round {round_num} ===")
+            tqdm.write(f"\n=== Federated Learning Round {round_num} ===")
             received_models.clear()
-            
             # Run local training and send to peers
             local_model, successful_sends = run_round(peer_addresses, own_address)
-            
             # Calculate required peers (excluding self)
             total_peers = len(peer_addresses) - 1
             min_required_peers = max(1, total_peers // 2)  # At least 50% of peers
-            
             if successful_sends < min_required_peers:
-                logger.error(f"Failed to reach minimum required peers ({successful_sends}/{min_required_peers})")
+                tqdm.write(f"[ERROR] Failed to reach minimum required peers ({successful_sends}/{min_required_peers})")
                 raise RuntimeError("Insufficient peer connectivity")
-                
             # Wait for other peers
             if total_peers > 0:
-                logger.info(f"Waiting for peer models (minimum {min_required_peers} required)")
+                tqdm.write(f"[INFO] Waiting for peer models (minimum {min_required_peers} required)")
                 try:
                     wait_for_peer_models(min_required_peers)
                 except TimeoutError as e:
-                    logger.error(f"Timeout waiting for peer models: {str(e)}")
+                    tqdm.write(f"[ERROR] Timeout waiting for peer models: {str(e)}")
                     raise
-            
             # Combine local and received models
             all_models = [local_model] + received_models
-            
             # Perform federation
             global_model = simulate_federation(all_models)
-            logger.info(f"FedAvg complete with {len(all_models)} models")
-            logger.info(f"=== End of Round {round_num} ===\n")
+            tqdm.write(f"[ROUND] FedAvg complete with {len(all_models)} models")
+            tqdm.write(f"=== End of Round {round_num} ===\n")
             time.sleep(5)  # Optional: wait before next round
-
     except Exception as e:
-        logger.error(f"Fatal error in main process: {str(e)}")
-        raise
+        tqdm.write(f"[FATAL] Exception in main federated loop: {str(e)}")
 
