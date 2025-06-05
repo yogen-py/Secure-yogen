@@ -193,6 +193,8 @@ def simulate_federation(peer_models):
             tqdm.write(f"  {k}: mean={v['mean']:.4f}, std={v['std']:.4f}, min={v['min']:.4f}, max={v['max']:.4f}")
         checksum = state_dict_checksum(global_model)
         tqdm.write(f"[FEDAVG] Global model checksum: {checksum}")
+        torch.save(global_model, f'global_model_round_{round_num}.pt')
+        tqdm.write(f"[INFO] Saved global model for round {round_num} to disk.")
         return global_model
     except Exception as e:
         tqdm.write(f"[ERROR] Error in federation: {str(e)}")
@@ -245,7 +247,10 @@ if __name__ == "__main__":
                 tqdm.write(f"[DEBUG] Peer addresses: {peer_addresses}")
                 tqdm.write(f"[DEBUG] Own address: {own_address}")
                 tqdm.write(f"[DEBUG] Successful sends: {successful_sends}")
-                tqdm.write(f"[DEBUG] This node will skip this round and continue.")
+                tqdm.write(f"[DEBUG] This node will sleep and retry next round.")
+                # Optionally, re-test connections here
+                test_connections()  # Uncomment if you want to run your connection test script
+                time.sleep(60)  # Wait 60 seconds before next round
                 continue  # Skip this round, don't raise
             # Wait for other peers
             if total_peers > 0:
