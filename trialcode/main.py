@@ -12,6 +12,7 @@ import argparse
 import threading
 import hashlib
 from datetime import datetime
+from train import evaluate
 
 # Configure logging
 logging.basicConfig(
@@ -89,7 +90,7 @@ def state_dict_checksum(state_dict):
             m.update(v.cpu().numpy().tobytes())
     return m.hexdigest()[:12]
 
-def run_round(peer_addresses, own_address, max_retries=3, retry_delay=5):
+def run_round(peer_addresses, own_address, max_retries=10, retry_delay=10, global_model=None):
     try:
         tqdm.write("[ROUND] Starting local training round...")
         # Detailed per-epoch logging
@@ -108,6 +109,9 @@ def run_round(peer_addresses, own_address, max_retries=3, retry_delay=5):
             train_loader, test_loader = get_data_loaders(machine_id=machine_id, total_machines=total_machines, batch_size=batch_size)
             input_dim = next(iter(train_loader))[0].shape[1]
             model = SimpleBinaryClassifier(input_dim)
+            # Load global model weights if provided
+            if global_model is not None:
+                model.load_state_dict(global_model)
             criterion = get_loss()
             optimizer = get_optimizer(model)
             for epoch in range(epochs):
@@ -199,6 +203,12 @@ def start_grpc_server_in_thread(port=50051):
     server_thread.start()
     return server_thread
 
+def evaluate_global_model(global_model, machine_id=0, total_machines=4, batch_size=64):
+    from data import get_data_loaders
+    _, test_loader = get_data_loaders(machine_id=machine_id, total_machines=total_machines, batch_size=batch_size)
+    acc, prec, rec, f1 = evaluate(global_model, test_loader)
+    tqdm.write(f"[EVAL][Global Model] Accuracy: {acc:.4f} | Precision: {prec:.4f} | Recall: {rec:.4f} | F1: {f1:.4f}")
+
 if __name__ == "__main__":
     try:
         parser = argparse.ArgumentParser()
@@ -217,17 +227,26 @@ if __name__ == "__main__":
         own_address = f"{own_ip}:{own_port}"
         tqdm.write(f"[INFO] Own address: {own_address}")
         tqdm.write(f"[INFO] All peers: {peer_addresses}")
+        global_model = None
         for round_num in range(1, num_rounds + 1):
             tqdm.write(f"\n=== Federated Learning Round {round_num} ===")
             received_models.clear()
-            # Run local training and send to peers
-            local_model, successful_sends = run_round(peer_addresses, own_address)
+            # Evaluate the latest global model before starting the next round (after round 1)
+            if round_num > 1 and global_model is not None:
+                tqdm.write(f"[EVAL] Evaluating global model before round {round_num}...")
+                evaluate_global_model(global_model)
+            # Run local training and send to peers, passing global_model
+            local_model, successful_sends = run_round(peer_addresses, own_address, global_model=global_model)
             # Calculate required peers (excluding self)
             total_peers = len(peer_addresses) - 1
             min_required_peers = max(1, total_peers // 2)  # At least 50% of peers
             if successful_sends < min_required_peers:
                 tqdm.write(f"[ERROR] Failed to reach minimum required peers ({successful_sends}/{min_required_peers})")
-                raise RuntimeError("Insufficient peer connectivity")
+                tqdm.write(f"[DEBUG] Peer addresses: {peer_addresses}")
+                tqdm.write(f"[DEBUG] Own address: {own_address}")
+                tqdm.write(f"[DEBUG] Successful sends: {successful_sends}")
+                tqdm.write(f"[DEBUG] This node will skip this round and continue.")
+                continue  # Skip this round, don't raise
             # Wait for other peers
             if total_peers > 0:
                 tqdm.write(f"[INFO] Waiting for peer models (minimum {min_required_peers} required)")
