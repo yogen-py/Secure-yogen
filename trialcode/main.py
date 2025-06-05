@@ -13,6 +13,7 @@ import threading
 import hashlib
 from datetime import datetime
 from train import evaluate
+from start_fl_node import test_connections
 
 # Configure logging
 logging.basicConfig(
