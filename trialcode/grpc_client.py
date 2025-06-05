@@ -7,12 +7,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def send_model(state_dict, address="localhost:50051", timeout=30, use_ssl=False, ssl_cert=None):
+def send_model(state_dict, address="localhost:50051", round_num=1, timeout=30, use_ssl=False, ssl_cert=None):
     """
     Send model weights to a peer
     Args:
         state_dict: PyTorch model state dictionary
         address: gRPC server address (host:port)
+        round_num: Current federated round number
         timeout: Timeout in seconds
         use_ssl: Whether to use SSL/TLS
         ssl_cert: Path to SSL certificate file
@@ -34,7 +35,7 @@ def send_model(state_dict, address="localhost:50051", timeout=30, use_ssl=False,
             # Serialize and send model
             serialized = pickle.dumps(state_dict)
             response = stub.SendModel(
-                model_pb2.ModelWeights(weights=serialized),
+                model_pb2.ModelWeights(round=round_num, weights=serialized),
                 timeout=timeout
             )
             logger.info(f"Model sent successfully to {address}: {response.message}")

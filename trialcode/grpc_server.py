@@ -21,8 +21,19 @@ logger = logging.getLogger(__name__)
 received_models = []
 model_lock = threading.Lock()
 
+# Global current round
+current_round = 1
+
+def set_current_round(r):
+    global current_round
+    current_round = r
+
 class FLPeerServicer(model_pb2_grpc.FLPeerServicer):
     def SendModel(self, request, context):
+        if hasattr(request, 'round') and request.round != current_round:
+            logger.info(f"Ignored model for round {request.round} (current round: {current_round})")
+            print(f"[SERVER] Ignored model for round {request.round} (current round: {current_round})")
+            return model_pb2.Ack(message="Ignored: wrong round")
         try:
             # Deserialize model weights
             state_dict = pickle.loads(request.weights)

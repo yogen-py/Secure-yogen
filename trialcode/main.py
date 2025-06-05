@@ -6,7 +6,7 @@ import torch
 import time
 import yaml
 import socket
-from grpc_server import received_models, serve
+from grpc_server import received_models, serve, set_current_round
 from tqdm import tqdm
 import argparse
 import threading
@@ -90,7 +90,7 @@ def state_dict_checksum(state_dict):
             m.update(v.cpu().numpy().tobytes())
     return m.hexdigest()[:12]
 
-def run_round(peer_addresses, own_address, max_retries=10, retry_delay=10, global_model=None):
+def run_round(peer_addresses, own_address, max_retries=10, retry_delay=10, global_model=None, round_num=1):
     try:
         tqdm.write("[ROUND] Starting local training round...")
         # Detailed per-epoch logging
@@ -157,6 +157,7 @@ def run_round(peer_addresses, own_address, max_retries=10, retry_delay=10, globa
                 success = send_model(
                     local_weights, 
                     addr,
+                    round_num=round_num,
                     timeout=30,  # 30 second timeout
                     use_ssl=False  # Enable if SSL certificates are set up
                 )
@@ -235,14 +236,15 @@ if __name__ == "__main__":
         tqdm.write(f"[INFO] All peers: {peer_addresses}")
         global_model = None
         for round_num in range(1, num_rounds + 1):
+            set_current_round(round_num)
             tqdm.write(f"\n=== Federated Learning Round {round_num} ===")
             received_models.clear()
             # Evaluate the latest global model before starting the next round (after round 1)
             if round_num > 1 and global_model is not None:
                 tqdm.write(f"[EVAL] Evaluating global model before round {round_num}...")
                 evaluate_global_model(global_model)
-            # Run local training and send to peers, passing global_model
-            local_model, successful_sends = run_round(peer_addresses, own_address, global_model=global_model)
+            # Run local training and send to peers, passing global_model and round_num
+            local_model, successful_sends = run_round(peer_addresses, own_address, global_model=global_model, round_num=round_num)
             # Calculate required peers (excluding self)
             total_peers = len(peer_addresses) - 1
             min_required_peers = max(1, total_peers // 2)  # At least 50% of peers

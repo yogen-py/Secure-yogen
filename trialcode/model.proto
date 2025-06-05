@@ -14,7 +14,8 @@ service FLPeer {
 
 // ModelWeights: Contains serialized model parameters
 message ModelWeights {
-  bytes weights = 1;  // Serialized PyTorch state dict
+  int32 round = 1;
+  bytes weights = 2;  // Serialized PyTorch state dict
 }
 
 // Acknowledgment message for operations
