@@ -205,10 +205,14 @@ def start_grpc_server_in_thread(port=50051):
     server_thread.start()
     return server_thread
 
-def evaluate_global_model(global_model, machine_id=0, total_machines=4, batch_size=64):
+def evaluate_global_model(global_model_state_dict, machine_id=0, total_machines=4, batch_size=64):
     from data import get_data_loaders
+    from model import SimpleBinaryClassifier
     _, test_loader = get_data_loaders(machine_id=machine_id, total_machines=total_machines, batch_size=batch_size)
-    acc, prec, rec, f1 = evaluate(global_model, test_loader)
+    input_dim = next(iter(test_loader))[0].shape[1]
+    model = SimpleBinaryClassifier(input_dim)
+    model.load_state_dict(global_model_state_dict)
+    acc, prec, rec, f1 = evaluate(model, test_loader)
     tqdm.write(f"[EVAL][Global Model] Accuracy: {acc:.4f} | Precision: {prec:.4f} | Recall: {rec:.4f} | F1: {f1:.4f}")
 
 if __name__ == "__main__":
