@@ -22,6 +22,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+SAVE_MODEL_DEBUG = True  # Toggle to save sent/received models for inspection
+NODE_ID = None  # Set this to a unique identifier for each node (e.g., from host_config.yaml)
+
 def load_peers(config_file='host_config.yaml'):
     try:
         with open(config_file, 'r') as file:
@@ -151,10 +154,13 @@ def run_round(peer_addresses, own_address, max_retries=10, retry_delay=10, globa
                     tqdm.write(f"[SEND] Retrying send to {addr} (attempt {retries + 1}/{max_retries})")
                     time.sleep(retry_delay)
                 now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                tqdm.write(f"[SEND][{now}] Sending model to {addr}...")
-                # Log model size
                 model_size = sum(v.numel() for v in local_weights.values() if torch.is_tensor(v)) * 4 / 1024
-                tqdm.write(f"[SEND] Model size: {model_size:.2f} KB")
+                checksum = state_dict_checksum(local_weights)
+                tqdm.write(f"[SEND][{now}] Sending model to {addr} | Size: {model_size:.2f} KB | Checksum: {checksum} | Node: {NODE_ID}")
+                if SAVE_MODEL_DEBUG:
+                    fname = f"sent_model_{NODE_ID}_to_{addr.replace(':', '_')}_round{round_num}.pt"
+                    torch.save(local_weights, fname)
+                    tqdm.write(f"[SEND][DEBUG] Saved sent model to {fname}")
                 success = send_model(
                     local_weights, 
                     addr,
@@ -180,10 +186,15 @@ def run_round(peer_addresses, own_address, max_retries=10, retry_delay=10, globa
 def summarize_received_models():
     for i, state_dict in enumerate(received_models):
         stats = summarize_weights_full(state_dict)
-        tqdm.write(f"[RECEIVE] Model {i+1} weights summary:")
+        checksum = state_dict_checksum(state_dict)
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        tqdm.write(f"[RECEIVE][{now}] Model {i+1} weights summary | Checksum: {checksum} | Node: {NODE_ID}")
         for k, v in stats.items():
             tqdm.write(f"  {k}: mean={v['mean']:.4f}, std={v['std']:.4f}, min={v['min']:.4f}, max={v['max']:.4f}")
-        tqdm.write(f"  Checksum: {state_dict_checksum(state_dict)}")
+        if SAVE_MODEL_DEBUG:
+            fname = f"received_model_{NODE_ID}_idx{i+1}_round{current_round}.pt"
+            torch.save(state_dict, fname)
+            tqdm.write(f"[RECEIVE][DEBUG] Saved received model to {fname}")
 
 def simulate_federation(peer_models):
     try:

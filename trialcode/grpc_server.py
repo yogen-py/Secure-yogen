@@ -9,6 +9,7 @@ import threading
 from queue import Queue
 import ssl
 import datetime
+import hashlib
 
 # Configure logging
 logging.basicConfig(
@@ -24,15 +25,20 @@ model_lock = threading.Lock()
 # Global current round
 current_round = 1
 
+SAVE_MODEL_DEBUG = True  # Toggle to save received models for inspection
+NODE_ID = None  # Set this to a unique identifier for each node (e.g., from host_config.yaml)
+
 def set_current_round(r):
     global current_round
     current_round = r
 
 class FLPeerServicer(model_pb2_grpc.FLPeerServicer):
     def SendModel(self, request, context):
+        peer_addr = context.peer()
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         if hasattr(request, 'round') and request.round != current_round:
-            logger.info(f"Ignored model for round {request.round} (current round: {current_round})")
-            print(f"[SERVER] Ignored model for round {request.round} (current round: {current_round})")
+            logger.info(f"Ignored model from {peer_addr} for round {request.round} (current round: {current_round})")
+            print(f"[SERVER][{now}] Ignored model from {peer_addr} for round {request.round} (current round: {current_round}) | Node: {NODE_ID}")
             return model_pb2.Ack(message="Ignored: wrong round")
         try:
             # Deserialize model weights
@@ -43,9 +49,20 @@ class FLPeerServicer(model_pb2_grpc.FLPeerServicer):
                 received_models.append(state_dict)
                 count = len(received_models)
             
-            peer_addr = context.peer()
-            logger.info(f"Received model weights from {peer_addr} (total received: {count})")
-            print(f"[SERVER] Received model from {peer_addr} (total received: {count})")
+            # Model size and checksum
+            model_size = sum(v.numel() for v in state_dict.values() if torch.is_tensor(v)) * 4 / 1024
+            checksum = hashlib.sha256()
+            for k in sorted(state_dict.keys()):
+                v = state_dict[k]
+                if torch.is_tensor(v):
+                    checksum.update(v.cpu().numpy().tobytes())
+            checksum_str = checksum.hexdigest()[:12]
+            logger.info(f"Received model weights from {peer_addr} (total received: {count}) | Size: {model_size:.2f} KB | Checksum: {checksum_str} | Node: {NODE_ID}")
+            print(f"[SERVER][{now}] Received model from {peer_addr} (total received: {count}) | Size: {model_size:.2f} KB | Checksum: {checksum_str} | Node: {NODE_ID}")
+            if SAVE_MODEL_DEBUG:
+                fname = f"received_model_{NODE_ID}_from_{peer_addr.replace(':', '_')}_round{current_round}_idx{count}.pt"
+                torch.save(state_dict, fname)
+                print(f"[SERVER][DEBUG] Saved received model to {fname}")
             return model_pb2.Ack(message="Model received successfully")
             
         except pickle.UnpicklingError as e:
