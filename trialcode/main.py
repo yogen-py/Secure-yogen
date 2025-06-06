@@ -166,7 +166,8 @@ def run_round(peer_addresses, own_address, max_retries=3, retry_delay=3, global_
                     addr,
                     round_num=round_num,
                     timeout=30,  # 30 second timeout
-                    use_ssl=False  # Enable if SSL certificates are set up
+                    use_ssl=False,  # Enable if SSL certificates are set up
+                    node_id=NODE_ID
                 )
                 retries += 1
             if success:
@@ -183,7 +184,7 @@ def run_round(peer_addresses, own_address, max_retries=3, retry_delay=3, global_
         tqdm.write(f"[ERROR] Error in training round: {str(e)}")
         raise
 
-def summarize_received_models():
+def summarize_received_models(current_round):
     for i, state_dict in enumerate(received_models):
         stats = summarize_weights_full(state_dict)
         checksum = state_dict_checksum(state_dict)
@@ -279,7 +280,7 @@ if __name__ == "__main__":
                         if len(received_models) > prev_count:
                             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             tqdm.write(f"[RECEIVE][{now}] New model received! Total received: {len(received_models)}")
-                            summarize_received_models()
+                            summarize_received_models(round_num)
                             prev_count = len(received_models)
                         time.sleep(1)
                 except TimeoutError as e:

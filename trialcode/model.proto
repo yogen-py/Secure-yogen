@@ -35,4 +35,3 @@ message HealthCheckResponse {
   string peer_id = 2;    // ID of the responding peer
   string timestamp = 3;  // ISO format timestamp of response
 }
-

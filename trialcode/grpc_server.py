@@ -26,7 +26,7 @@ model_lock = threading.Lock()
 current_round = 1
 
 SAVE_MODEL_DEBUG = True  # Toggle to save received models for inspection
-NODE_ID = None  # Set this to a unique identifier for each node (e.g., from host_config.yaml)
+NODE_ID = 'NodeB'  # Set this to a unique identifier for each node (e.g., from host_config.yaml)
 
 def set_current_round(r):
     global current_round
@@ -103,7 +103,11 @@ def serve(port=50051, ssl_key=None, ssl_cert=None):
         ssl_cert: Path to SSL certificate file
     """
     try:
-        server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+        grpc_options = [
+            ('grpc.max_send_message_length', 100 * 1024 * 1024),
+            ('grpc.max_receive_message_length', 100 * 1024 * 1024),
+        ]
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=10), options=grpc_options)
         model_pb2_grpc.add_FLPeerServicer_to_server(FLPeerServicer(), server)
         
         if ssl_key and ssl_cert:
