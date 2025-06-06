@@ -34,7 +34,7 @@ def regenerate_grpc():
         proto_file
     ]
     print(f"[{timestamp}] Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=False, text=True)
     if result.returncode == 0:
         print(f"[{timestamp}] gRPC code generated successfully.")
         print(f"[{timestamp}] Updated files: model_pb2.py, model_pb2_grpc.py")
