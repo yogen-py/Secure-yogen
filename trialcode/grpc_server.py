@@ -32,47 +32,44 @@ def set_current_round(r):
     global current_round
     current_round = r
 
+def state_dict_checksum(state_dict):
+    """Compute the checksum of the state_dict for integrity verification"""
+    checksum = hashlib.sha256()
+    for k in sorted(state_dict.keys()):
+        v = state_dict[k]
+        if torch.is_tensor(v):
+            checksum.update(v.cpu().numpy().tobytes())
+    return checksum.hexdigest()[:12]
+
 class FLPeerServicer(model_pb2_grpc.FLPeerServicer):
     def SendModel(self, request, context):
         peer_addr = context.peer()
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        logger.info(f"[SERVER] Received model from {peer_addr} for round {request.round} (current round: {current_round})")
         if hasattr(request, 'round') and request.round != current_round:
-            logger.info(f"Ignored model from {peer_addr} for round {request.round} (current round: {current_round})")
-            print(f"[SERVER][{now}] Ignored model from {peer_addr} for round {request.round} (current round: {current_round}) | Node: {NODE_ID}")
+            logger.warning(f"[SERVER] Ignored model from {peer_addr} for round {request.round} (current round: {current_round})")
             return model_pb2.Ack(message="Ignored: wrong round")
         try:
-            # Deserialize model weights
+            logger.info(f"[SERVER] Deserializing model weights from {peer_addr}")
             state_dict = pickle.loads(request.weights)
-            
-            # Thread-safe append to received models
             with model_lock:
                 received_models.append(state_dict)
                 count = len(received_models)
-            
-            # Model size and checksum
             model_size = sum(v.numel() for v in state_dict.values() if torch.is_tensor(v)) * 4 / 1024
-            checksum = hashlib.sha256()
-            for k in sorted(state_dict.keys()):
-                v = state_dict[k]
-                if torch.is_tensor(v):
-                    checksum.update(v.cpu().numpy().tobytes())
-            checksum_str = checksum.hexdigest()[:12]
-            logger.info(f"Received model weights from {peer_addr} (total received: {count}) | Size: {model_size:.2f} KB | Checksum: {checksum_str} | Node: {NODE_ID}")
-            print(f"[SERVER][{now}] Received model from {peer_addr} (total received: {count}) | Size: {model_size:.2f} KB | Checksum: {checksum_str} | Node: {NODE_ID}")
+            checksum = state_dict_checksum(state_dict)
+            logger.info(f"[SERVER] Model received successfully from {peer_addr} | Size: {model_size:.2f} KB | Checksum: {checksum}")
             if SAVE_MODEL_DEBUG:
                 fname = f"received_model_{NODE_ID}_from_{peer_addr.replace(':', '_')}_round{current_round}_idx{count}.pt"
                 torch.save(state_dict, fname)
-                print(f"[SERVER][DEBUG] Saved received model to {fname}")
+                logger.info(f"[SERVER] Saved received model to {fname}")
             return model_pb2.Ack(message="Model received successfully")
-            
         except pickle.UnpicklingError as e:
-            logger.error(f"Failed to deserialize model from {context.peer()}: {str(e)}")
+            logger.error(f"[SERVER] Failed to deserialize model from {peer_addr}: {str(e)}")
             context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
             context.set_details("Invalid model format")
             return model_pb2.Ack(message="Error: Invalid model format")
-            
         except Exception as e:
-            logger.error(f"Error processing model from {context.peer()}: {str(e)}")
+            logger.error(f"[SERVER] Error processing model from {peer_addr}: {str(e)}")
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
             return model_pb2.Ack(message=f"Error: {str(e)}")
