@@ -94,7 +94,7 @@ def state_dict_checksum(state_dict):
             m.update(v.cpu().numpy().tobytes())
     return m.hexdigest()[:12]
 
-def run_round(peer_addresses, own_address, max_retries=10, retry_delay=10, global_model=None, round_num=1):
+def run_round(peer_addresses, own_address, max_retries=3, retry_delay=3, global_model=None, round_num=1):
     try:
         tqdm.write("[ROUND] Starting local training round...")
         # Detailed per-epoch logging
@@ -296,6 +296,8 @@ if __name__ == "__main__":
             tqdm.write(f"[UPDATE] Global model checksum: {state_dict_checksum(global_model)}")
             tqdm.write(f"=== End of Round {round_num} ===\n")
             time.sleep(5)  # Optional: wait before next round
+            test_connections()
+            test_connection
     except Exception as e:
         tqdm.write(f"[FATAL] Exception in main federated loop: {str(e)}")
 
