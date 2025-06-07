@@ -23,7 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 SAVE_MODEL_DEBUG = True  # Toggle to save sent/received models for inspection
-NODE_ID = None  # Set this to a unique identifier for each node (e.g., from host_config.yaml)
+NODE_ID = "PEER B"  # Set this to a unique identifier for each node (e.g., from host_config.yaml)
 
 def load_peers(config_file='host_config.yaml'):
     try:
@@ -295,10 +295,15 @@ if __name__ == "__main__":
             stats = summarize_weights_full(global_model)
             tqdm.write(f"[UPDATE] Model updated after FedAvg: " + ", ".join([f"{k}: mean={v['mean']:.4f}, std={v['std']:.4f}, min={v['min']:.4f}, max={v['max']:.4f}" for k,v in stats.items() if 'weight' in k]))
             tqdm.write(f"[UPDATE] Global model checksum: {state_dict_checksum(global_model)}")
+            # --- ROUND SUMMARY METRICS ---
+            tqdm.write(f"[ROUND SUMMARY] Sent models to {successful_sends}/{total_peers} peers, received {len(received_models)} models this round.")
+            tqdm.write(f"[ROUND SUMMARY] Local model checksum: {state_dict_checksum(local_model)}")
+            for i, state_dict in enumerate(received_models):
+                tqdm.write(f"[ROUND SUMMARY] Received model {i+1} checksum: {state_dict_checksum(state_dict)}")
             tqdm.write(f"=== End of Round {round_num} ===\n")
             time.sleep(5)  # Optional: wait before next round
             test_connections()
-            test_connection
+            # test_connection  # (appears to be a typo, remove or fix if needed)
     except Exception as e:
         tqdm.write(f"[FATAL] Exception in main federated loop: {str(e)}")
 
